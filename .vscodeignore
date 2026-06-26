@@ -8,6 +8,8 @@ tsconfig.json
 # Dev tooling / repo metadata
 .github/**
 .vscode/**
+.jj/**
+.claude/**
 .gitignore
 .vscodeignore
 package-lock.json
