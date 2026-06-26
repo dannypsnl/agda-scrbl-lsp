@@ -1,0 +1,50 @@
+{
+  "name": "agda-scrbl",
+  "publisher": "dannypsnl",
+  "displayName": "Agda in Scribble (.lagda.scrbl)",
+  "description": "Interactive Agda development directly on literate .lagda.scrbl cards",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["workspaceContains:**/*.lagda.scrbl"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "lagda-scrbl",
+        "aliases": ["Literate Agda (Scribble)"],
+        "filenamePatterns": ["*.lagda.scrbl"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "commands": [
+      { "command": "agda-scrbl.caseSplit", "title": "Agda (scrbl): Case Split" },
+      { "command": "agda-scrbl.give", "title": "Agda (scrbl): Give" },
+      { "command": "agda-scrbl.refine", "title": "Agda (scrbl): Refine" },
+      { "command": "agda-scrbl.goalType", "title": "Agda (scrbl): Goal Type & Context" },
+      { "command": "agda-scrbl.insertSymbol", "title": "Agda (scrbl): Insert Unicode Symbol" },
+      { "command": "agda-scrbl.load", "title": "Agda (scrbl): Load / Reload" }
+    ],
+    "keybindings": [
+      { "command": "agda-scrbl.caseSplit", "key": "ctrl+c ctrl+c", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
+      { "command": "agda-scrbl.give", "key": "ctrl+c ctrl+space", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
+      { "command": "agda-scrbl.refine", "key": "ctrl+c ctrl+r", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
+      { "command": "agda-scrbl.load", "key": "ctrl+c ctrl+l", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "bun run test.ts"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.11"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}
