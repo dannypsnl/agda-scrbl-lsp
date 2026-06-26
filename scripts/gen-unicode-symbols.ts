@@ -36,7 +36,11 @@ interface Sym { name: string; glyph: string; aliases?: string[]; }
 const out: Sym[] = [];
 for (const cp of Object.keys(table)) {
   const code = Number(cp);
-  if (code < 32) continue; // skip control chars (e.g. \newline -> U+000A)
+  // Skip the whole ASCII block: control chars (\newline -> U+000A) and printable
+  // ASCII alike. An abbrev that just yields `=`, `(`, `<`, ... is pointless in a
+  // unicode picker — you can type those keys directly — and it collides with the
+  // real glyph's name (e.g. `\leq` -> `<` shadows `\leq` -> ≤). Unicode only.
+  if (code < 0x80) continue;
   const glyph = String.fromCodePoint(code);
   const abbrevs = [...new Set(table[cp])]; // dedup, preserve order
   const extra = EXTRA_ALIAS[glyph];
