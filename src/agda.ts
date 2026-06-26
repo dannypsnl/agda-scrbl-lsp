@@ -70,13 +70,23 @@ export interface GoalInfo {
   context: { name: string; type: string }[];
 }
 
+// Where a name is defined, as Agda reports it: a 1-based *character* (code-point)
+// offset into `filepath` (which may be the mirror itself, another mirror, or a
+// library .agda source).
+export interface DefinitionSite {
+  filepath: string;
+  position: number;
+}
+
 // One syntax-highlighting token as Agda reports it. `from`/`to` are 1-based
 // *character* (code-point) offsets into the mirror file, `to` exclusive. `atoms`
 // is Agda's aspect list, e.g. ["keyword"], ["function"], ["datatype"].
+// `definitionSite` (when present) drives goto-definition.
 export interface HighlightToken {
   from: number;
   to: number;
   atoms: string[];
+  definitionSite?: DefinitionSite;
 }
 
 function rangeOf(obj: any): { line?: number; startCol?: number; endCol?: number } {
@@ -189,8 +199,14 @@ export class Agda {
       // across however many HighlightingInfo messages a load emits.
       for (const it of resp.info.payload) {
         const r = it?.range;
-        if (Array.isArray(r) && r.length === 2 && Array.isArray(it.atoms))
-          this.highlights.push({ from: r[0], to: r[1], atoms: it.atoms });
+        if (Array.isArray(r) && r.length === 2 && Array.isArray(it.atoms)) {
+          const d = it.definitionSite;
+          this.highlights.push({
+            from: r[0], to: r[1], atoms: it.atoms,
+            definitionSite: d && typeof d.filepath === "string" && typeof d.position === "number"
+              ? { filepath: d.filepath, position: d.position } : undefined,
+          });
+        }
       }
     }
     if (this.sink) this.sink(resp);

@@ -4,14 +4,14 @@ import {
   createConnection, ProposedFeatures, TextDocuments, TextDocumentSyncKind,
   DiagnosticSeverity, Diagnostic, Hover, InitializeResult, TextEdit,
   ApplyWorkspaceEditParams, CodeAction, CodeActionKind,
-  SemanticTokensBuilder,
+  SemanticTokensBuilder, Location,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
-import { fileURLToPath } from "url";
-import { readdirSync, mkdirSync, writeFileSync, rmSync } from "fs";
+import { fileURLToPath, pathToFileURL } from "url";
+import { readdirSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "fs";
 import { dirname, basename, resolve } from "path";
 import { mirror, indentOf } from "./mirror";
-import { Agda, DEFAULT_LOAD_TIMEOUT, HighlightToken } from "./agda";
+import { Agda, DEFAULT_LOAD_TIMEOUT, HighlightToken, DefinitionSite } from "./agda";
 
 // --- Semantic highlighting -------------------------------------------------
 // Agda colours code by "aspect" (keyword, function, datatype, …). We surface
@@ -49,52 +49,72 @@ function tokenTypeFor(atoms: string[]): number {
   return -1;
 }
 
-interface ScrblToken { line: number; char: number; length: number; type: number; }
+// A highlighted span in scrbl coordinates. `type` is -1 when no aspect maps to a
+// semantic token (we still keep the span if it carries a `def` for goto).
+interface ScrblSpan {
+  line: number; char: number; length: number;
+  type: number;
+  def?: DefinitionSite;
+}
 
-// Convert Agda's 1-based code-point offsets (into the mirror) to scrbl semantic
-// tokens. The mirror is line-preserved, so the line is identity; the column gets
-// the stripped indent added back (same recovery as scrblCol). Multi-line tokens
-// are clamped to their first line — LSP semantic tokens may not span lines.
-function toScrblTokens(
-  highlights: HighlightToken[], mirrorText: string, indents: number[],
-): ScrblToken[] {
+// An index over a mirror's text that turns Agda's 1-based code-point offsets into
+// (line, code-point-column). The mirror is line-preserved, so its line is the
+// scrbl line; the column still needs the stripped indent added back.
+interface MirrorIndex { lineStart: number[]; lineLen: number[]; total: number; }
+function mirrorIndex(mirrorText: string): MirrorIndex {
   const lines = mirrorText.split("\n");
-  // 0-based code-point offset where each line starts; one extra entry past the end.
   const lineStart = new Array<number>(lines.length + 1);
+  const lineLen = new Array<number>(lines.length);
   let acc = 0;
-  for (let l = 0; l < lines.length; l++) { lineStart[l] = acc; acc += [...lines[l]].length + 1; }
+  for (let l = 0; l < lines.length; l++) {
+    lineStart[l] = acc;
+    lineLen[l] = [...lines[l]].length;
+    acc += lineLen[l] + 1;
+  }
   lineStart[lines.length] = acc;
+  return { lineStart, lineLen, total: acc };
+}
 
-  const lineOf = (idx: number): number => {
-    let lo = 0, hi = lines.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >> 1;
-      if (lineStart[mid] <= idx) lo = mid; else hi = mid - 1;
-    }
-    return lo;
-  };
+// Locate the line owning 0-based code-point offset `idx` (binary search).
+function lineOfOffset(ix: MirrorIndex, idx: number): number {
+  let lo = 0, hi = ix.lineLen.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (ix.lineStart[mid] <= idx) lo = mid; else hi = mid - 1;
+  }
+  return lo;
+}
 
-  const out: ScrblToken[] = [];
+// Mirror code-point offset (1-based, as Agda reports) -> scrbl position, adding
+// back the indent stripped from that line. null if out of range.
+function mirrorOffsetToScrbl(
+  ix: MirrorIndex, indents: number[], position1: number,
+): { line: number; character: number } | null {
+  const idx = position1 - 1;
+  if (idx < 0 || idx > ix.total) return null;
+  const line = lineOfOffset(ix, idx);
+  return { line, character: (idx - ix.lineStart[line]) + (indents[line] ?? 0) };
+}
+
+// Convert Agda's highlighting payload to scrbl spans. Multi-line tokens are
+// clamped to their first line — LSP semantic tokens may not span lines.
+function toScrblSpans(
+  highlights: HighlightToken[], ix: MirrorIndex, indents: number[],
+): ScrblSpan[] {
+  const out: ScrblSpan[] = [];
   for (const h of highlights) {
     const type = tokenTypeFor(h.atoms);
-    if (type < 0) continue;
-    const idx = h.from - 1;                       // 0-based start offset
-    if (idx < 0 || idx >= acc) continue;
-    const line = lineOf(idx);
-    const col = idx - lineStart[line];
-    const lineLen = [...lines[line]].length;
-    const length = Math.min(h.to - h.from, lineLen - col);   // clamp to this line
+    if (type < 0 && !h.definitionSite) continue;   // nothing useful to surface
+    const idx = h.from - 1;
+    if (idx < 0 || idx >= ix.total) continue;
+    const line = lineOfOffset(ix, idx);
+    const col = idx - ix.lineStart[line];
+    const length = Math.min(h.to - h.from, ix.lineLen[line] - col);   // clamp to line
     if (length <= 0) continue;
-    out.push({ line, char: col + (indents[line] ?? 0), length, type });
+    out.push({ line, char: col + (indents[line] ?? 0), length, type, def: h.definitionSite });
   }
-  // SemanticTokensBuilder needs tokens in document order. Agda runs a token pass
-  // and a scope pass, so identical tokens (keywords, symbols) can arrive twice;
-  // drop exact duplicates after sorting.
-  out.sort((a, b) => a.line - b.line || a.char - b.char || a.length - b.length || a.type - b.type);
-  return out.filter((t, i) => {
-    const p = out[i - 1];
-    return !p || p.line !== t.line || p.char !== t.char || p.length !== t.length || p.type !== t.type;
-  });
+  out.sort((a, b) => a.line - b.line || a.char - b.char);
+  return out;
 }
 
 const connection = createConnection(ProposedFeatures.all);
@@ -106,7 +126,9 @@ let loadTimeoutMs = DEFAULT_LOAD_TIMEOUT;
 
 interface Session {
   agda: Agda; root: string; mirror: string; indents: number[];
-  tokens: ScrblToken[];   // semantic tokens from the last load (scrbl coords)
+  uri: string;            // the .lagda.scrbl document this session serves
+  spans: ScrblSpan[];     // highlighting spans from the last load (scrbl coords)
+  ix: MirrorIndex;        // offset index over the last mirror text (for goto)
 }
 const sessions = new Map<string, Session>();
 
@@ -155,7 +177,7 @@ function sessionFor(doc: TextDocument): Session {
         connection.sendNotification("agda-scrbl/status", { uri, state: "error", message: reason });
     },
   );
-  s = { agda, root, mirror, indents: [], tokens: [] };
+  s = { agda, root, mirror, indents: [], uri: doc.uri, spans: [], ix: mirrorIndex("") };
   sessions.set(doc.uri, s);
   return s;
 }
@@ -217,7 +239,8 @@ async function reload(doc: TextDocument, expand = false) {
 
   // Refresh syntax colouring from this load's highlighting. Even a file with
   // errors gets coloured up to the point Agda could scope-check.
-  s.tokens = toScrblTokens(s.agda.highlights, mirrorText, s.indents);
+  s.ix = mirrorIndex(mirrorText);
+  s.spans = toScrblSpans(s.agda.highlights, s.ix, s.indents);
   // Ask the client to re-pull tokens; harmless if it lacks the capability.
   try { connection.languages.semanticTokens.refresh(); } catch { /* ignore */ }
 
@@ -250,6 +273,7 @@ connection.onInitialize((params): InitializeResult => {
     capabilities: {
       textDocumentSync: TextDocumentSyncKind.Full,
       hoverProvider: true,
+      definitionProvider: true,
       codeActionProvider: true,
       semanticTokensProvider: { legend: SEMANTIC_LEGEND, full: true },
       executeCommandProvider: { commands: [
@@ -298,8 +322,52 @@ connection.onCodeAction((params): CodeAction[] => {
 connection.languages.semanticTokens.on((params) => {
   const s = sessions.get(params.textDocument.uri);
   const b = new SemanticTokensBuilder();
-  if (s) for (const t of s.tokens) b.push(t.line, t.char, t.length, t.type, 0);
+  if (s) {
+    // Spans are already sorted; Agda's token + scope passes can emit the same
+    // keyword/symbol twice, so skip an exact-duplicate of the previous one.
+    let pl = -1, pc = -1, pn = -1, pt = -1;
+    for (const t of s.spans) {
+      if (t.type < 0) continue;
+      if (t.line === pl && t.char === pc && t.length === pn && t.type === pt) continue;
+      b.push(t.line, t.char, t.length, t.type, 0);
+      pl = t.line; pc = t.char; pn = t.length; pt = t.type;
+    }
+  }
   return b.build();
+});
+
+// Resolve a token's definitionSite to a scrbl/file Location. A target inside a
+// known mirror (this doc's or another open scrbl's) maps back to the .scrbl;
+// anything else (library .agda sources) points at the real file. The returned
+// range is zero-width at the definition's first character.
+function resolveDefinition(def: DefinitionSite): Location | null {
+  for (const s of sessions.values()) {
+    if (s.mirror === def.filepath) {
+      const pos = mirrorOffsetToScrbl(s.ix, s.indents, def.position);
+      return pos ? { uri: s.uri, range: { start: pos, end: pos } } : null;
+    }
+  }
+  // A real file on disk (a library, or a mirror with no open session): convert
+  // the code-point offset against its current contents.
+  let text: string;
+  try { text = readFileSync(def.filepath, "utf8"); } catch { return null; }
+  const ix = mirrorIndex(text);
+  const pos = mirrorOffsetToScrbl(ix, [], def.position);
+  return pos ? { uri: pathToFileURL(def.filepath).href, range: { start: pos, end: pos } } : null;
+}
+
+connection.onDefinition((params): Location | null => {
+  const s = sessions.get(params.textDocument.uri);
+  if (!s) return null;
+  const { line, character } = params.position;
+  // Innermost span under the cursor that carries a definition.
+  let hit: ScrblSpan | undefined;
+  for (const sp of s.spans) {
+    if (!sp.def || sp.line !== line) continue;
+    if (character < sp.char || character > sp.char + sp.length) continue;
+    if (!hit || sp.length < hit.length) hit = sp;
+  }
+  return hit ? resolveDefinition(hit.def!) : null;
 });
 
 connection.onHover((p): Hover | null => {
