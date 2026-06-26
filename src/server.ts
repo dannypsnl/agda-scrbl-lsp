@@ -4,13 +4,98 @@ import {
   createConnection, ProposedFeatures, TextDocuments, TextDocumentSyncKind,
   DiagnosticSeverity, Diagnostic, Hover, InitializeResult, TextEdit,
   ApplyWorkspaceEditParams, CodeAction, CodeActionKind,
+  SemanticTokensBuilder,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { fileURLToPath } from "url";
 import { readdirSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { dirname, basename, resolve } from "path";
 import { mirror, indentOf } from "./mirror";
-import { Agda, DEFAULT_LOAD_TIMEOUT } from "./agda";
+import { Agda, DEFAULT_LOAD_TIMEOUT, HighlightToken } from "./agda";
+
+// --- Semantic highlighting -------------------------------------------------
+// Agda colours code by "aspect" (keyword, function, datatype, …). We surface
+// these as LSP semantic tokens; the editor theme decides the actual colour.
+// The legend order defines the integer ids encoded in the token stream.
+const TOKEN_TYPES = [
+  "namespace", "type", "enumMember", "property", "function", "macro",
+  "keyword", "operator", "variable", "parameter", "typeParameter",
+  "string", "number", "comment",
+];
+const TOKEN_TYPE_ID = new Map(TOKEN_TYPES.map((t, i) => [t, i]));
+const SEMANTIC_LEGEND = { tokenTypes: TOKEN_TYPES, tokenModifiers: [] as string[] };
+
+// Map an Agda aspect to an LSP token type. A payload's `atoms` may carry several
+// aspects (e.g. an operator that is also a function); we pick the most specific
+// in this preference order.
+const ATOM_TO_TYPE: Record<string, string> = {
+  function: "function", postulate: "function",
+  datatype: "type", record: "type", primitive: "type",   // Set/Prop/sorts read as types
+  inductiveconstructor: "enumMember", coinductiveconstructor: "enumMember",
+  field: "property", module: "namespace", macro: "macro",
+  generalizable: "typeParameter", argument: "parameter", bound: "variable",
+  keyword: "keyword", symbol: "operator", string: "string", number: "number",
+  comment: "comment", pragma: "macro",
+};
+const ATOM_PREFERENCE = [
+  "function", "postulate", "datatype", "record", "primitive",
+  "inductiveconstructor", "coinductiveconstructor", "field", "module", "macro",
+  "generalizable", "argument", "bound", "keyword", "symbol",
+  "string", "number", "comment", "pragma",
+];
+function tokenTypeFor(atoms: string[]): number {
+  for (const a of ATOM_PREFERENCE)
+    if (atoms.includes(a)) return TOKEN_TYPE_ID.get(ATOM_TO_TYPE[a])!;
+  return -1;
+}
+
+interface ScrblToken { line: number; char: number; length: number; type: number; }
+
+// Convert Agda's 1-based code-point offsets (into the mirror) to scrbl semantic
+// tokens. The mirror is line-preserved, so the line is identity; the column gets
+// the stripped indent added back (same recovery as scrblCol). Multi-line tokens
+// are clamped to their first line — LSP semantic tokens may not span lines.
+function toScrblTokens(
+  highlights: HighlightToken[], mirrorText: string, indents: number[],
+): ScrblToken[] {
+  const lines = mirrorText.split("\n");
+  // 0-based code-point offset where each line starts; one extra entry past the end.
+  const lineStart = new Array<number>(lines.length + 1);
+  let acc = 0;
+  for (let l = 0; l < lines.length; l++) { lineStart[l] = acc; acc += [...lines[l]].length + 1; }
+  lineStart[lines.length] = acc;
+
+  const lineOf = (idx: number): number => {
+    let lo = 0, hi = lines.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (lineStart[mid] <= idx) lo = mid; else hi = mid - 1;
+    }
+    return lo;
+  };
+
+  const out: ScrblToken[] = [];
+  for (const h of highlights) {
+    const type = tokenTypeFor(h.atoms);
+    if (type < 0) continue;
+    const idx = h.from - 1;                       // 0-based start offset
+    if (idx < 0 || idx >= acc) continue;
+    const line = lineOf(idx);
+    const col = idx - lineStart[line];
+    const lineLen = [...lines[line]].length;
+    const length = Math.min(h.to - h.from, lineLen - col);   // clamp to this line
+    if (length <= 0) continue;
+    out.push({ line, char: col + (indents[line] ?? 0), length, type });
+  }
+  // SemanticTokensBuilder needs tokens in document order. Agda runs a token pass
+  // and a scope pass, so identical tokens (keywords, symbols) can arrive twice;
+  // drop exact duplicates after sorting.
+  out.sort((a, b) => a.line - b.line || a.char - b.char || a.length - b.length || a.type - b.type);
+  return out.filter((t, i) => {
+    const p = out[i - 1];
+    return !p || p.line !== t.line || p.char !== t.char || p.length !== t.length || p.type !== t.type;
+  });
+}
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -19,7 +104,10 @@ const documents = new TextDocuments(TextDocument);
 // Overridable via the client's initializationOptions (agda-scrbl.loadTimeout).
 let loadTimeoutMs = DEFAULT_LOAD_TIMEOUT;
 
-interface Session { agda: Agda; root: string; mirror: string; indents: number[]; }
+interface Session {
+  agda: Agda; root: string; mirror: string; indents: number[];
+  tokens: ScrblToken[];   // semantic tokens from the last load (scrbl coords)
+}
 const sessions = new Map<string, Session>();
 
 // Agda reports columns against the dedented mirror; add back the indent stripped
@@ -67,7 +155,7 @@ function sessionFor(doc: TextDocument): Session {
         connection.sendNotification("agda-scrbl/status", { uri, state: "error", message: reason });
     },
   );
-  s = { agda, root, mirror, indents: [] };
+  s = { agda, root, mirror, indents: [], tokens: [] };
   sessions.set(doc.uri, s);
   return s;
 }
@@ -83,8 +171,10 @@ async function reload(doc: TextDocument, expand = false) {
   const current = () => sessions.get(doc.uri) === s;
   connection.sendNotification("agda-scrbl/status", { uri: doc.uri, state: "checking" });
   let goals, errors;
+  let mirrorText = "";
   try {
     const m = mirror(doc.getText());
+    mirrorText = m.text;
     s.indents = m.indents;
     writeFileSync(s.mirror, m.text + "\n");
     ({ goals, errors } = await s.agda.load(loadTimeoutMs));
@@ -125,6 +215,12 @@ async function reload(doc: TextDocument, expand = false) {
     errors: errors.length,
   });
 
+  // Refresh syntax colouring from this load's highlighting. Even a file with
+  // errors gets coloured up to the point Agda could scope-check.
+  s.tokens = toScrblTokens(s.agda.highlights, mirrorText, s.indents);
+  // Ask the client to re-pull tokens; harmless if it lacks the capability.
+  try { connection.languages.semanticTokens.refresh(); } catch { /* ignore */ }
+
   // agda-mode behaviour: on an explicit load, expand bare `?` into `{!  !}`
   // so each goal becomes an editable hole. Only on load — never while typing.
   if (expand) {
@@ -155,6 +251,7 @@ connection.onInitialize((params): InitializeResult => {
       textDocumentSync: TextDocumentSyncKind.Full,
       hoverProvider: true,
       codeActionProvider: true,
+      semanticTokensProvider: { legend: SEMANTIC_LEGEND, full: true },
       executeCommandProvider: { commands: [
         "agda-scrbl.exec.caseSplit", "agda-scrbl.exec.give",
         "agda-scrbl.exec.refine", "agda-scrbl.exec.goalType",
@@ -196,6 +293,13 @@ connection.onCodeAction((params): CodeAction[] => {
     );
   }
   return actions;
+});
+
+connection.languages.semanticTokens.on((params) => {
+  const s = sessions.get(params.textDocument.uri);
+  const b = new SemanticTokensBuilder();
+  if (s) for (const t of s.tokens) b.push(t.line, t.char, t.length, t.type, 0);
+  return b.build();
 });
 
 connection.onHover((p): Hover | null => {

@@ -70,6 +70,15 @@ export interface GoalInfo {
   context: { name: string; type: string }[];
 }
 
+// One syntax-highlighting token as Agda reports it. `from`/`to` are 1-based
+// *character* (code-point) offsets into the mirror file, `to` exclusive. `atoms`
+// is Agda's aspect list, e.g. ["keyword"], ["function"], ["datatype"].
+export interface HighlightToken {
+  from: number;
+  to: number;
+  atoms: string[];
+}
+
 function rangeOf(obj: any): { line?: number; startCol?: number; endCol?: number } {
   const r = obj?.range?.[0];
   return { line: r?.start?.line, startCol: r?.start?.col, endCol: r?.end?.col };
@@ -102,6 +111,8 @@ export class Agda {
   goals: Goal[] = [];
   errors: AgdaError[] = [];
   warnings: AgdaError[] = [];
+  // Highlighting tokens streamed during the last load (NonInteractive level).
+  highlights: HighlightToken[] = [];
 
   constructor(
     private mirrorFile: string,
@@ -173,6 +184,14 @@ export class Agda {
       this.warnings = (info.warnings ?? []).map(parseError);
     } else if (resp.kind === "DisplayInfo" && resp.info?.kind === "Error") {
       this.errors = [parseError(resp.info.error ?? resp.info)];
+    } else if (resp.kind === "HighlightingInfo" && Array.isArray(resp.info?.payload)) {
+      // Direct highlighting (method `Direct`): tokens are inline, accumulated
+      // across however many HighlightingInfo messages a load emits.
+      for (const it of resp.info.payload) {
+        const r = it?.range;
+        if (Array.isArray(r) && r.length === 2 && Array.isArray(it.atoms))
+          this.highlights.push({ from: r[0], to: r[1], atoms: it.atoms });
+      }
     }
     if (this.sink) this.sink(resp);
   }
@@ -221,12 +240,14 @@ export class Agda {
   }
 
   async load(timeoutMs = DEFAULT_LOAD_TIMEOUT): Promise<LoadResult> {
-    this.goals = []; this.errors = []; this.warnings = [];
+    this.goals = []; this.errors = []; this.warnings = []; this.highlights = [];
+    // `NonInteractive Direct`: ask Agda to stream syntax-highlighting info inline
+    // (level `None` would suppress it). We collect it in dispatch() above.
     await this.command(
       `Cmd_load "${this.mirrorFile}" []`,
       (r) => r.kind === "InteractionPoints" ||
              (r.kind === "DisplayInfo" && r.info?.kind === "Error"),
-      "None Direct",
+      "NonInteractive Direct",
       timeoutMs,
     );
     return { goals: this.goals, errors: this.errors, warnings: this.warnings };

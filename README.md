@@ -45,6 +45,8 @@ package with `vsce package` and install the `.vsix`. Then open any
 `src/*.lagda.scrbl`:
 
 - diagnostics (errors + `?n : type` goals) appear inline on save/edit
+- semantic syntax highlighting (keywords, datatypes, constructors, functions,
+  bound vars, …) from Agda's own scope-check, applied to the code blocks
 - hover a goal line to see its type
 - `Ctrl-C Ctrl-L` — load/reload
 - `Ctrl-C Ctrl-C` — case split (prompts for the variable)
