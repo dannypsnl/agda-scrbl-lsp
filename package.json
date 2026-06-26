@@ -33,8 +33,28 @@
       { "command": "agda-scrbl.caseSplit", "key": "ctrl+c ctrl+c", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
       { "command": "agda-scrbl.give", "key": "ctrl+c ctrl+space", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
       { "command": "agda-scrbl.refine", "key": "ctrl+c ctrl+r", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
-      { "command": "agda-scrbl.load", "key": "ctrl+c ctrl+l", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" }
-    ]
+      { "command": "agda-scrbl.load", "key": "ctrl+c ctrl+l", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
+      { "command": "agda-scrbl.insertSymbol", "key": "\\", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/ && !suggestWidgetVisible && !inQuickOpen" }
+    ],
+    "configuration": {
+      "title": "Agda (scrbl)",
+      "properties": {
+        "agda-scrbl.unicodeInput.userSymbols": {
+          "type": "array",
+          "default": [],
+          "description": "User-defined unicode symbols. Each entry: { name, glyph, aliases? }. User entries override built-ins with the same name and are searchable by name and aliases in both the inline \\-completion and the Insert Symbol picker.",
+          "items": {
+            "type": "object",
+            "required": ["name", "glyph"],
+            "properties": {
+              "name": { "type": "string", "description": "Canonical name shown in the picker (typeable as \\name)." },
+              "glyph": { "type": "string", "description": "The unicode character(s) inserted." },
+              "aliases": { "type": "array", "items": { "type": "string" }, "description": "Alternate names searched by the picker and completion." }
+            }
+          }
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -42,7 +62,8 @@
     "watch": "tsc -watch -p ./",
     "package": "vsce package",
     "publish": "vsce publish",
-    "test": "bun run test.ts"
+    "test": "bun run test.ts",
+    "test:unicode": "bun run test-unicode.ts"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1",

@@ -3,17 +3,30 @@
 // (input box / quick pick), matching the case-split variable prompt.
 import * as path from "path";
 import {
-  window, commands, languages, ExtensionContext,
-  StatusBarItem, StatusBarAlignment, Range, Position,
-  CompletionItem, CompletionItemKind, QuickPickItem, TextEditor,
-  TextDocument, CancellationToken,
+  window, commands, workspace, ExtensionContext,
+  StatusBarItem, StatusBarAlignment,
+  QuickPick, QuickPickItem, QuickPickItemKind, TextEditor,
 } from "vscode";
 import {
   LanguageClient, LanguageClientOptions, ServerOptions, TransportKind,
 } from "vscode-languageclient/node";
-import { UNICODE } from "./unicode";
+import { Symbol as UnicodeSymbol, loadSymbols, mergeSymbols } from "./unicodeSymbols";
+import { Recents, orderByRecents } from "./unicodeRecents";
 
 let client: LanguageClient;
+
+// Bundled + user-defined symbol table, refreshed whenever the user setting
+// changes so new entries are picked up without a reload.
+let symbols: UnicodeSymbol[] = [];
+
+function loadAllSymbols(context: ExtensionContext): UnicodeSymbol[] {
+  const bundled = path.join(context.extensionPath, "resources", "unicode-symbols.json");
+  const builtIn = loadSymbols(bundled);
+  const userRaw = workspace
+    .getConfiguration("agda-scrbl.unicodeInput")
+    .get<UnicodeSymbol[]>("userSymbols", []);
+  return mergeSymbols(builtIn, userRaw);
+}
 
 export function activate(context: ExtensionContext) {
   const module = context.asAbsolutePath(path.join("out", "server.js"));
@@ -44,13 +57,18 @@ export function activate(context: ExtensionContext) {
   client.start().catch((err) =>
     window.showErrorMessage(`Agda (scrbl) language server failed to start: ${err}`));
 
+  symbols = loadAllSymbols(context);
+
   context.subscriptions.push(
+    workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("agda-scrbl.unicodeInput")) symbols = loadAllSymbols(context);
+    }),
     // palette / keybinding entry points (act on the cursor)
     commands.registerCommand("agda-scrbl.caseSplit", () => caseSplitAt()),
     commands.registerCommand("agda-scrbl.give", () => giveRefineAt("agda-scrbl.exec.give")),
     commands.registerCommand("agda-scrbl.refine", () => giveRefineAt("agda-scrbl.exec.refine")),
     commands.registerCommand("agda-scrbl.goalType", () => goalAt()),
-    commands.registerCommand("agda-scrbl.insertSymbol", insertSymbol),
+    commands.registerCommand("agda-scrbl.insertSymbol", () => insertSymbol(context)),
     commands.registerCommand("agda-scrbl.load", () => {
       const ed = window.activeTextEditor;
       if (ed) return commands.executeCommand("agda-scrbl.exec.load", ed.document.uri.toString());
@@ -60,8 +78,6 @@ export function activate(context: ExtensionContext) {
     commands.registerCommand("agda-scrbl.giveAt", (uri: string, line: number) => giveRefineAt("agda-scrbl.exec.give", uri, line)),
     commands.registerCommand("agda-scrbl.refineAt", (uri: string, line: number) => giveRefineAt("agda-scrbl.exec.refine", uri, line)),
     commands.registerCommand("agda-scrbl.goalTypeAt", (uri: string, line: number) => goalAt(uri, line)),
-    // inline \to -> → completion
-    languages.registerCompletionItemProvider({ pattern: "**/*.lagda.scrbl" }, { provideCompletionItems }, "\\"),
   );
 }
 
@@ -113,31 +129,71 @@ async function goalAt(uri?: string, line?: number) {
   window.showQuickPick(items, { title: `Agda goal ?${info.id}` });
 }
 
-async function insertSymbol() {
+type SymbolItem = QuickPickItem & { symbol: UnicodeSymbol };
+
+// Sentinel: the user typed a lone `\` inside the picker, meaning "I want a
+// literal backslash" — since the `\` key is bound to open this picker, this is
+// how you still type the character itself.
+const LiteralBackslash = Symbol("agda-scrbl.LiteralBackslash");
+type PickResult = UnicodeSymbol | typeof LiteralBackslash | undefined;
+
+// Insert a unicode glyph the agda-mode way: bound to `\`, so pressing backslash
+// pops this picker inline (no command palette). Type the abbrev (`to`, `lambda`)
+// and accept to drop the glyph at the cursor. Most-recently-used glyphs float to
+// the top under a "recent" separator. Modelled on vscode-violet.
+async function insertSymbol(context: ExtensionContext) {
   const ed = window.activeTextEditor;
   if (!ed) return;
-  const items: QuickPickItem[] = UNICODE.map(([abbr, sym]) => ({ label: sym, description: "\\" + abbr }));
-  const pick = await window.showQuickPick(items, { title: "Insert Agda symbol", matchOnDescription: true });
-  if (pick) ed.edit((b) => b.insert(ed.selection.active, pick.label));
-}
 
-function provideCompletionItems(doc: TextDocument, pos: Position, _t: CancellationToken) {
-  const upto = doc.lineAt(pos.line).text.slice(0, pos.character);
-  const m = upto.match(/\\[A-Za-z0-9^_=<>:|.+\-]*$/);
-  if (!m) return undefined;
-  const range = new Range(new Position(pos.line, pos.character - m[0].length), pos);
-  const items: CompletionItem[] = [];
-  for (const [abbr, sym] of UNICODE) {
-    const full = "\\" + abbr;
-    if (!full.startsWith(m[0])) continue;
-    const it = new CompletionItem(full, CompletionItemKind.Text);
-    it.detail = sym;
-    it.filterText = full;
-    it.insertText = sym;
-    it.range = range;
-    items.push(it);
+  const recents = new Recents(context.globalState);
+  const { ordered, recentCount } = orderByRecents(symbols, recents.list());
+
+  const items: SymbolItem[] = ordered.map((s) => ({
+    label: s.glyph,
+    description: s.name,
+    detail: (s.aliases ?? []).join(", "),
+    symbol: s,
+  }));
+  // Separators only make sense unfiltered; drop them once the user types so they
+  // don't clutter the filtered list.
+  const sectioned: (SymbolItem | QuickPickItem)[] =
+    recentCount > 0
+      ? [
+          { label: "recent", kind: QuickPickItemKind.Separator },
+          ...items.slice(0, recentCount),
+          { label: "symbols", kind: QuickPickItemKind.Separator },
+          ...items.slice(recentCount),
+        ]
+      : items;
+
+  const chosen = await new Promise<PickResult>((resolve) => {
+    let done = false;
+    const qp: QuickPick<SymbolItem | QuickPickItem> = window.createQuickPick();
+    qp.placeholder = "Type an abbrev (to, lambda, bN). Type \\ for a literal backslash.";
+    qp.matchOnDescription = true;
+    qp.matchOnDetail = true;
+    qp.items = sectioned;
+    qp.onDidChangeValue((v) => {
+      if (v === "\\") { done = true; qp.hide(); resolve(LiteralBackslash); return; }
+      qp.items = v.length === 0 ? sectioned : items;
+    });
+    qp.onDidAccept(() => {
+      const sel = qp.selectedItems[0] as SymbolItem | undefined;
+      done = true;
+      qp.hide();
+      resolve(sel?.symbol);
+    });
+    qp.onDidHide(() => { qp.dispose(); if (!done) resolve(undefined); });
+    qp.show();
+  });
+
+  if (chosen === undefined) return;
+  if (chosen === LiteralBackslash) {
+    await ed.edit((b) => b.insert(ed.selection.active, "\\"));
+    return;
   }
-  return items;
+  await ed.edit((b) => b.insert(ed.selection.active, chosen.glyph));
+  await recents.push(chosen.name);
 }
 
 export function deactivate(): Thenable<void> | undefined {

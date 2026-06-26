@@ -12,5 +12,6 @@ tsconfig.json
 .vscodeignore
 package-lock.json
 
-# Keep: out/, package.json, README.md, LICENSE, language-configuration.json
+# Keep: out/, resources/, package.json, README.md, LICENSE, language-configuration.json
 !out/**/*.js
+!resources/**

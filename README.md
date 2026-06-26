@@ -50,6 +50,17 @@ package with `vsce package` and install the `.vsix`. Then open any
 - `Ctrl-C Ctrl-C` — case split (prompts for the variable)
 - `Ctrl-C Ctrl-Space` — give (fills a `{! term !}` hole)
 - `Ctrl-C Ctrl-R` — refine (`{! f !}` → `f ?`, intro on empty holes)
+- `\` — unicode input: pops a picker, type an abbrev (`to`, `lambda`, `bN`) and
+  accept to insert the glyph (`→`, `λ`, `ℕ`). Recently used glyphs float to the
+  top; type a lone `\` to insert a literal backslash. Extend the table with the
+  `agda-scrbl.unicodeInput.userSymbols` setting (`{ name, glyph, aliases? }`).
+
+  The bundled table is the **complete Agda input table** (2300+ symbols),
+  generated from `agda-mode`'s data — so you can uninstall the `agda-mode`
+  extension and rely on this picker alone. (`agda-mode`'s `\` input method also
+  grabs `.lagda.scrbl` files, because its keybinding matches any language id
+  containing `agda`/`lagda`; uninstalling it removes that overlap.) Regenerate
+  with `bun run scripts/gen-unicode-symbols.ts <path/to/agda-mode/asset/query.js>`.
 
 `?` and `{! !}` are both recognised as goals. The edits land in the
 `.lagda.scrbl` itself.
