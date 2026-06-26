@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="resources/icons/agda.svg" alt="Agda" width="320">
+</p>
+
 # agda-scrbl
 
 Interactive Agda development **directly on `.lagda.scrbl`** cards — without
@@ -81,3 +85,10 @@ Not yet wired (same `executeCommand` plumbing):
 - auto / goal-type-context panel
 - `ExtendedLambda` case-split falls back to whole-line replace
 - one `agda` process per open document (no cross-document interleaving guard)
+
+## Logo
+
+The Agda mark is "Hönan Agda" from the
+[official Agda logotype](https://github.com/agda/agda/blob/master/doc/user-manual/agda.svg)
+(design by Miëtek Bak), used under its BSD-3-Clause license. The square icons in
+`resources/icons/` are derived from it.

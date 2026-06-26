@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Agda "Hönan Agda" mark, extracted from the official Agda logotype (design by Miëtek Bak),
+     https://github.com/agda/agda/blob/master/doc/user-manual/agda.svg — BSD-3-Clause. -->
+<svg width="128px" height="128px" viewBox="0 0 1400 1400" version="1.1" xmlns="http://www.w3.org/2000/svg">
+  <g id="logo" transform="translate(100, 200)" fill="none" fill-rule="evenodd">
+    <circle id="left-eye" fill="#1A1A1A" cx="240" cy="270" r="27"></circle>
+    <circle id="right-eye" fill="#1A1A1A" cx="340" cy="270" r="27"></circle>
+    <g stroke="#1A1A1A" stroke-width="36" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M1000,0 L600,400" id="wing"></path>
+      <path d="M1200,100 L1000,300" id="tail-middle"></path>
+      <path d="M1200,0 L1000,200" id="tail-top"></path>
+      <path d="M500,0 L300,200" id="head-middle"></path>
+      <path d="M600,0 L400,200" id="head-right"></path>
+      <path d="M400,0 L0,400 L200,400 L200,600 C200,820 380,1000 600,1000 C820,1000 1000,820 1000,600 L1000,400 L1200,200" id="body"></path>
+    </g>
+  </g>
+</svg>

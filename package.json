@@ -5,6 +5,7 @@
   "description": "Interactive Agda development directly on literate .lagda.scrbl cards",
   "version": "0.2.0",
   "license": "MIT",
+  "icon": "icon.png",
   "repository": { "type": "git", "url": "https://github.com/dannypsnl/agda-scrbl-lsp.git" },
   "bugs": { "url": "https://github.com/dannypsnl/agda-scrbl-lsp/issues" },
   "homepage": "https://github.com/dannypsnl/agda-scrbl-lsp#readme",
@@ -18,7 +19,21 @@
         "id": "lagda-scrbl",
         "aliases": ["Literate Agda (Scribble)"],
         "filenamePatterns": ["*.lagda.scrbl"],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./resources/icons/agda-light.svg",
+          "dark": "./resources/icons/agda-dark.svg"
+        }
+      },
+      {
+        "id": "agda",
+        "aliases": ["Agda", "Literate Agda"],
+        "extensions": [".agda", ".lagda"],
+        "filenamePatterns": ["*.lagda.md"],
+        "icon": {
+          "light": "./resources/icons/agda-light.svg",
+          "dark": "./resources/icons/agda-dark.svg"
+        }
       }
     ],
     "commands": [
