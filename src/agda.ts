@@ -75,12 +75,29 @@ function rangeOf(obj: any): { line?: number; startCol?: number; endCol?: number 
   return { line: r?.start?.line, startCol: r?.start?.col, endCol: r?.end?.col };
 }
 
+// Default ceiling for a single load. Cold-compiling TypeTopology/cubical/stdlib
+// can take a while, but waiting forever is worse than telling the user Agda is
+// not responding — callers can raise this via the `agda-scrbl.loadTimeout`
+// setting. Non-load commands use the shorter COMMAND_TIMEOUT below.
+export const DEFAULT_LOAD_TIMEOUT = 120_000;   // 2 minutes
+const COMMAND_TIMEOUT = 60_000;
+
 export class Agda {
   private proc: ChildProcessWithoutNullStreams;
   private buf = "";
   private queue: Array<() => void> = [];
   private busy = false;
   private sink: ((resp: any) => void) | null = null;
+  // The reject handler of the command currently awaiting a response, so a
+  // process death or stdin failure can fail it immediately instead of letting
+  // it hang until the timeout.
+  private inflightReject: ((e: Error) => void) | null = null;
+  private disposing = false;
+
+  // Set once the process has died (crash, exit, or dispose). Every queued or new
+  // command rejects immediately rather than writing to a dead stdin and waiting.
+  dead = false;
+  deadReason = "";
 
   goals: Goal[] = [];
   errors: AgdaError[] = [];
@@ -91,13 +108,37 @@ export class Agda {
     cwd: string,
     agdaPath = "agda",
     private onLog?: (s: string) => void,
+    // Called when the process dies unexpectedly (not on an explicit dispose), so
+    // the host can flip its status to error with the reason.
+    private onFatal?: (reason: string) => void,
   ) {
     this.proc = spawn(agdaPath, ["--interaction-json"], { cwd });
     this.proc.stdout.setEncoding("utf8");
     this.proc.stdout.on("data", (d: string) => this.onData(d));
     this.proc.stderr.setEncoding("utf8");
     this.proc.stderr.on("data", (d: string) => this.onLog?.(String(d)));
-    this.proc.on("exit", (code) => this.onLog?.(`agda exited: ${code}\n`));
+    // spawn failure (e.g. agda not on PATH) surfaces here, not via exit.
+    this.proc.on("error", (err) => this.die(`agda failed to start: ${err.message}`, true));
+    // Writing to a process that has gone away emits EPIPE on stdin; swallow it
+    // through die() rather than letting it crash the host as an unhandled error.
+    this.proc.stdin.on("error", (err) => this.die(`agda stdin error: ${err.message}`, !this.disposing));
+    this.proc.on("exit", (code, signal) => {
+      this.onLog?.(`agda exited: ${signal ? `signal ${signal}` : `code ${code}`}\n`);
+      this.die(
+        signal ? `agda was killed (${signal})` : `agda exited (code ${code})`,
+        !this.disposing,
+      );
+    });
+  }
+
+  // Mark the process dead, fail any in-flight command, and (when the death was
+  // unexpected) notify the host. Idempotent — the first cause wins.
+  private die(reason: string, fatal: boolean) {
+    if (this.dead) return;
+    this.dead = true;
+    this.deadReason = reason;
+    this.inflightReject?.(new Error(reason));
+    if (fatal) this.onFatal?.(reason);
   }
 
   private onData(d: string) {
@@ -153,28 +194,40 @@ export class Agda {
     body: string,
     isTerminal: (r: any) => boolean,
     mode = "None Direct",
-    timeoutMs = 60000,
+    timeoutMs = COMMAND_TIMEOUT,
   ): Promise<any[]> {
     return this.enqueue(
       () =>
-        new Promise<any[]>((resolve) => {
+        new Promise<any[]>((resolve, reject) => {
+          if (this.dead) { reject(new Error(this.deadReason || "agda is not running")); return; }
           const collected: any[] = [];
-          const done = () => { this.sink = null; clearTimeout(t); resolve(collected); };
-          const t = setTimeout(done, timeoutMs);
+          let settled = false;
+          const cleanup = () => { this.sink = null; this.inflightReject = null; clearTimeout(t); };
+          const done = () => { if (settled) return; settled = true; cleanup(); resolve(collected); };
+          const fail = (e: Error) => { if (settled) return; settled = true; cleanup(); reject(e); };
+          const t = setTimeout(
+            () => fail(new Error(`Agda did not respond within ${Math.round(timeoutMs / 1000)}s`)),
+            timeoutMs,
+          );
+          this.inflightReject = fail;
           this.sink = (r) => { collected.push(r); if (isTerminal(r)) done(); };
-          this.proc.stdin.write(`IOTCM "${this.mirrorFile}" ${mode} (${body})\n`);
+          try {
+            this.proc.stdin.write(`IOTCM "${this.mirrorFile}" ${mode} (${body})\n`);
+          } catch (e) {
+            fail(new Error(`failed to send command to agda: ${String(e)}`));
+          }
         }),
     );
   }
 
-  async load(): Promise<LoadResult> {
+  async load(timeoutMs = DEFAULT_LOAD_TIMEOUT): Promise<LoadResult> {
     this.goals = []; this.errors = []; this.warnings = [];
     await this.command(
       `Cmd_load "${this.mirrorFile}" []`,
       (r) => r.kind === "InteractionPoints" ||
              (r.kind === "DisplayInfo" && r.info?.kind === "Error"),
       "None Direct",
-      600000,   // cold compile of TypeTopology/cubical/stdlib can take minutes
+      timeoutMs,
     );
     return { goals: this.goals, errors: this.errors, warnings: this.warnings };
   }
@@ -230,5 +283,10 @@ export class Agda {
     };
   }
 
-  dispose() { try { this.proc.stdin.end(); this.proc.kill(); } catch { /* ignore */ } }
+  dispose() {
+    this.disposing = true;
+    // Unstick anything still awaiting a response before we tear the process down.
+    this.die("agda session disposed", false);
+    try { this.proc.stdin.end(); this.proc.kill(); } catch { /* ignore */ }
+  }
 }

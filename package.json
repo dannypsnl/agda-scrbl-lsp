@@ -27,18 +27,26 @@
       { "command": "agda-scrbl.refine", "title": "Agda (scrbl): Refine" },
       { "command": "agda-scrbl.goalType", "title": "Agda (scrbl): Goal Type & Context" },
       { "command": "agda-scrbl.insertSymbol", "title": "Agda (scrbl): Insert Unicode Symbol" },
-      { "command": "agda-scrbl.load", "title": "Agda (scrbl): Load / Reload" }
+      { "command": "agda-scrbl.load", "title": "Agda (scrbl): Load / Reload" },
+      { "command": "agda-scrbl.restart", "title": "Agda (scrbl): Restart Agda" }
     ],
     "keybindings": [
       { "command": "agda-scrbl.caseSplit", "key": "ctrl+c ctrl+c", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
       { "command": "agda-scrbl.give", "key": "ctrl+c ctrl+space", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
       { "command": "agda-scrbl.refine", "key": "ctrl+c ctrl+r", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
       { "command": "agda-scrbl.load", "key": "ctrl+c ctrl+l", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
+      { "command": "agda-scrbl.restart", "key": "ctrl+c ctrl+x ctrl+r", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
       { "command": "agda-scrbl.insertSymbol", "key": "\\", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/ && !suggestWidgetVisible && !inQuickOpen" }
     ],
     "configuration": {
       "title": "Agda (scrbl)",
       "properties": {
+        "agda-scrbl.loadTimeout": {
+          "type": "number",
+          "default": 120,
+          "minimum": 1,
+          "markdownDescription": "Seconds to wait for `agda` to respond to a load before giving up and reporting that Agda is not responding. Raise this if cold-compiling large libraries (TypeTopology, cubical) legitimately takes longer. Reload the window to apply a change."
+        },
         "agda-scrbl.unicodeInput.userSymbols": {
           "type": "array",
           "default": [],

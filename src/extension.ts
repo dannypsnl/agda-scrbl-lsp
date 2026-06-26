@@ -36,6 +36,10 @@ export function activate(context: ExtensionContext) {
   };
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", pattern: "**/*.lagda.scrbl" }],
+    // Sent once at startup; changing the setting needs a window reload to apply.
+    initializationOptions: {
+      loadTimeout: workspace.getConfiguration("agda-scrbl").get<number>("loadTimeout", 120),
+    },
   };
   client = new LanguageClient("agdaScrbl", "Agda (lagda.scrbl)", serverOptions, clientOptions);
 
@@ -45,9 +49,13 @@ export function activate(context: ExtensionContext) {
 
   // Register the handler before start() so early status notifications aren't missed.
   client.onNotification("agda-scrbl/status", (p: any) => {
+    status.tooltip = undefined;
     switch (p.state) {
       case "checking": status.text = "$(sync~spin) Agda: checking…"; break;
-      case "error":    status.text = `$(error) Agda: ${p.errors ?? ""} error${p.errors === 1 ? "" : "s"}`.trimEnd(); break;
+      case "error":    status.text = p.message
+                         ? `$(error) Agda: ${p.message}`                       // process died / no response
+                         : `$(error) Agda: ${p.errors ?? ""} error${p.errors === 1 ? "" : "s"}`.trimEnd();
+                       status.tooltip = p.message ?? undefined; break;
       case "done":     status.text = p.goals > 0
                          ? `$(target) Agda: ${p.goals} goal${p.goals === 1 ? "" : "s"}`
                          : "$(check) Agda: All done"; break;
@@ -72,6 +80,10 @@ export function activate(context: ExtensionContext) {
     commands.registerCommand("agda-scrbl.load", () => {
       const ed = window.activeTextEditor;
       if (ed) return commands.executeCommand("agda-scrbl.exec.load", ed.document.uri.toString());
+    }),
+    commands.registerCommand("agda-scrbl.restart", () => {
+      const ed = window.activeTextEditor;
+      if (ed) return commands.executeCommand("agda-scrbl.exec.restart", ed.document.uri.toString());
     }),
     // code-action targets (line provided by the action)
     commands.registerCommand("agda-scrbl.caseSplitAt", (uri: string, line: number) => caseSplitAt(uri, line)),

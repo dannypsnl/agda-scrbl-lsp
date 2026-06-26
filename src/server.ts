@@ -10,10 +10,14 @@ import { fileURLToPath } from "url";
 import { readdirSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { dirname, basename, resolve } from "path";
 import { mirror, indentOf } from "./mirror";
-import { Agda } from "./agda";
+import { Agda, DEFAULT_LOAD_TIMEOUT } from "./agda";
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
+
+// How long to wait for `agda` to answer a load before reporting it unresponsive.
+// Overridable via the client's initializationOptions (agda-scrbl.loadTimeout).
+let loadTimeoutMs = DEFAULT_LOAD_TIMEOUT;
 
 interface Session { agda: Agda; root: string; mirror: string; indents: number[]; }
 const sessions = new Map<string, Session>();
@@ -51,7 +55,18 @@ function sessionFor(doc: TextDocument): Session {
   mkdirSync(dirname(mirror), { recursive: true });
   // drop a stale legacy mirror of the same module (pre-.agda builds wrote .lagda.md)
   rmSync(mirror.replace(/\.agda$/, ".lagda.md"), { force: true });
-  const agda = new Agda(mirror, root, "agda", (m) => connection.console.log("[agda] " + m.trim()));
+  const uri = doc.uri;
+  const agda = new Agda(
+    mirror, root, "agda",
+    (m) => connection.console.log("[agda] " + m.trim()),
+    // The process died unexpectedly: surface the reason so the status bar stops
+    // spinning on "checking" and the user can restart. Ignore if a newer session
+    // has already taken over this document.
+    (reason) => {
+      if (sessions.get(uri)?.agda === agda)
+        connection.sendNotification("agda-scrbl/status", { uri, state: "error", message: reason });
+    },
+  );
   s = { agda, root, mirror, indents: [] };
   sessions.set(doc.uri, s);
   return s;
@@ -63,18 +78,23 @@ function prettify(msg: string, mirror: string): string {
 
 async function reload(doc: TextDocument, expand = false) {
   const s = sessionFor(doc);
+  // If this session gets disposed/replaced mid-load (e.g. a Restart Agda), its
+  // late notifications must not clobber the fresh session's status.
+  const current = () => sessions.get(doc.uri) === s;
   connection.sendNotification("agda-scrbl/status", { uri: doc.uri, state: "checking" });
   let goals, errors;
   try {
     const m = mirror(doc.getText());
     s.indents = m.indents;
     writeFileSync(s.mirror, m.text + "\n");
-    ({ goals, errors } = await s.agda.load());
+    ({ goals, errors } = await s.agda.load(loadTimeoutMs));
   } catch (err) {
-    connection.sendNotification("agda-scrbl/status",
-      { uri: doc.uri, state: "error", message: String(err) });
+    if (current())
+      connection.sendNotification("agda-scrbl/status",
+        { uri: doc.uri, state: "error", message: err instanceof Error ? err.message : String(err) });
     throw err;
   }
+  if (!current()) return;
   const diags: Diagnostic[] = [];
   for (const g of goals) {
     const gl = g.line - 1;
@@ -127,17 +147,22 @@ function scheduleReload(doc: TextDocument) {
   debounce.set(doc.uri, setTimeout(() => reload(doc).catch((e) => connection.console.error(String(e))), 400));
 }
 
-connection.onInitialize((): InitializeResult => ({
-  capabilities: {
-    textDocumentSync: TextDocumentSyncKind.Full,
-    hoverProvider: true,
-    codeActionProvider: true,
-    executeCommandProvider: { commands: [
-      "agda-scrbl.exec.caseSplit", "agda-scrbl.exec.give",
-      "agda-scrbl.exec.refine", "agda-scrbl.exec.goalType", "agda-scrbl.exec.load",
-    ] },
-  },
-}));
+connection.onInitialize((params): InitializeResult => {
+  const lt = (params.initializationOptions as any)?.loadTimeout;
+  if (typeof lt === "number" && lt > 0) loadTimeoutMs = lt * 1000;
+  return {
+    capabilities: {
+      textDocumentSync: TextDocumentSyncKind.Full,
+      hoverProvider: true,
+      codeActionProvider: true,
+      executeCommandProvider: { commands: [
+        "agda-scrbl.exec.caseSplit", "agda-scrbl.exec.give",
+        "agda-scrbl.exec.refine", "agda-scrbl.exec.goalType",
+        "agda-scrbl.exec.load", "agda-scrbl.exec.restart",
+      ] },
+    },
+  };
+});
 
 documents.onDidOpen((e) => reload(e.document, true).catch((err) => connection.console.error(String(err))));
 documents.onDidChangeContent((e) => scheduleReload(e.document));
@@ -197,10 +222,27 @@ connection.onExecuteCommand(async (params) => {
     return;
   }
 
+  // One-click recovery for a wedged process: tear down the old session (killing
+  // its agda) and load again from a fresh one — no window reload needed.
+  if (cmd === "agda-scrbl.exec.restart") {
+    const [uri] = params.arguments as [string];
+    const doc = documents.get(uri);
+    if (!doc) return;
+    const old = sessions.get(uri);
+    if (old) { old.agda.dispose(); sessions.delete(uri); }
+    await reload(doc, true);   // sessionFor() spins up a new agda
+    return;
+  }
+
   const [uri, line, char, variable] = params.arguments as [string, number, number, string?];
   const doc = documents.get(uri);
   const s = sessions.get(uri);
   if (!doc || !s) return;
+  if (s.agda.dead) {
+    connection.window.showWarningMessage(
+      `Agda is not running (${s.agda.deadReason}). Run “Agda (scrbl): Restart Agda”.`);
+    return;
+  }
   // Use the goals from the last load (open/edit/explicit-load already keep them
   // fresh). NEVER block on a reload here — a cold first load takes minutes and
   // would make the command feel dead.
