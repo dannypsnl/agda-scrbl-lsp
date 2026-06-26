@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="resources/icons/agda.svg" alt="Agda" width="320">
+  <img src="resources/icons/agda.png" alt="Agda" width="320">
 </p>
 
 # agda-scrbl
