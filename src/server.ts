@@ -9,14 +9,20 @@ import { TextDocument } from "vscode-languageserver-textdocument";
 import { fileURLToPath } from "url";
 import { readdirSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { dirname, basename, resolve } from "path";
-import { scrblToMirror, indentOf } from "./mirror";
+import { mirror, indentOf } from "./mirror";
 import { Agda } from "./agda";
 
 const connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
 
-interface Session { agda: Agda; root: string; mirror: string; }
+interface Session { agda: Agda; root: string; mirror: string; indents: number[]; }
 const sessions = new Map<string, Session>();
+
+// Agda reports columns against the dedented mirror; add back the indent stripped
+// from that line to land on the scrbl column. line is 0-based.
+function scrblCol(s: Session, line: number, agdaCol1Based: number): number {
+  return agdaCol1Based - 1 + (s.indents[line] ?? 0);
+}
 const debounce = new Map<string, NodeJS.Timeout>();
 
 function hasAgdaLib(dir: string): boolean {
@@ -46,7 +52,7 @@ function sessionFor(doc: TextDocument): Session {
   // drop a stale legacy mirror of the same module (pre-.agda builds wrote .lagda.md)
   rmSync(mirror.replace(/\.agda$/, ".lagda.md"), { force: true });
   const agda = new Agda(mirror, root, "agda", (m) => connection.console.log("[agda] " + m.trim()));
-  s = { agda, root, mirror };
+  s = { agda, root, mirror, indents: [] };
   sessions.set(doc.uri, s);
   return s;
 }
@@ -60,7 +66,9 @@ async function reload(doc: TextDocument, expand = false) {
   connection.sendNotification("agda-scrbl/status", { uri: doc.uri, state: "checking" });
   let goals, errors;
   try {
-    writeFileSync(s.mirror, scrblToMirror(doc.getText()) + "\n");
+    const m = mirror(doc.getText());
+    s.indents = m.indents;
+    writeFileSync(s.mirror, m.text + "\n");
     ({ goals, errors } = await s.agda.load());
   } catch (err) {
     connection.sendNotification("agda-scrbl/status",
@@ -69,20 +77,22 @@ async function reload(doc: TextDocument, expand = false) {
   }
   const diags: Diagnostic[] = [];
   for (const g of goals) {
+    const gl = g.line - 1;
     diags.push({
       severity: DiagnosticSeverity.Information,
-      range: { start: { line: g.line - 1, character: g.startCol - 1 },
-               end:   { line: g.line - 1, character: g.endCol - 1 } },
+      range: { start: { line: gl, character: scrblCol(s, gl, g.startCol) },
+               end:   { line: gl, character: scrblCol(s, gl, g.endCol) } },
       message: `?${g.id} : ${g.type}`,
       source: "agda",
     });
   }
   for (const e of errors) {
     const line = (e.line ?? 1) - 1;
+    const endLine = (e.endLine ?? e.line ?? 1) - 1;
     diags.push({
       severity: DiagnosticSeverity.Error,
-      range: { start: { line, character: (e.startCol ?? 1) - 1 },
-               end:   { line: (e.endLine ?? e.line ?? 1) - 1, character: (e.endCol ?? 1) - 1 } },
+      range: { start: { line, character: scrblCol(s, line, e.startCol ?? 1) },
+               end:   { line: endLine, character: scrblCol(s, endLine, e.endCol ?? 1) } },
       message: prettify(e.message, s.mirror),
       source: "agda",
     });
@@ -100,8 +110,9 @@ async function reload(doc: TextDocument, expand = false) {
   if (expand) {
     const edits: TextEdit[] = [];
     for (const g of goals) {
-      const r = { start: { line: g.line - 1, character: g.startCol - 1 },
-                  end:   { line: g.line - 1, character: g.endCol - 1 } };
+      const gl = g.line - 1;
+      const r = { start: { line: gl, character: scrblCol(s, gl, g.startCol) },
+                  end:   { line: gl, character: scrblCol(s, gl, g.endCol) } };
       if (doc.getText(r) === "?") edits.push(TextEdit.replace(r, "{!  !}"));
     }
     if (edits.length) {
@@ -131,6 +142,10 @@ connection.onInitialize((): InitializeResult => ({
 documents.onDidOpen((e) => reload(e.document, true).catch((err) => connection.console.error(String(err))));
 documents.onDidChangeContent((e) => scheduleReload(e.document));
 documents.onDidClose((e) => {
+  // Cancel any pending debounced reload — otherwise it fires after close,
+  // re-creates the session via sessionFor(), and leaks a fresh agda process.
+  const pending = debounce.get(e.document.uri);
+  if (pending) { clearTimeout(pending); debounce.delete(e.document.uri); }
   const s = sessions.get(e.document.uri);
   if (s) { s.agda.dispose(); sessions.delete(e.document.uri); }
   connection.sendDiagnostics({ uri: e.document.uri, diagnostics: [] });
@@ -144,8 +159,6 @@ connection.onCodeAction((params): CodeAction[] => {
   const actions: CodeAction[] = [];
   for (const g of s.agda.goals) {
     if (g.line - 1 < start.line || g.line - 1 > end.line) continue;
-    const char = g.startCol - 1;
-    void char;
     actions.push(
       { title: `Agda: Goal type & context (?${g.id})`, kind: CodeActionKind.RefactorRewrite,
         command: { title: "Goal type", command: "agda-scrbl.goalTypeAt", arguments: [uri, g.line - 1] } },
@@ -202,7 +215,8 @@ connection.onExecuteCommand(async (params) => {
   // forgiving: cursor inside a goal's range, else any goal on the line, else the
   // sole goal in the file.
   const g =
-    goals.find((g) => g.line - 1 === line && g.startCol - 1 <= char && char <= g.endCol - 1) ??
+    goals.find((g) => g.line - 1 === line &&
+      scrblCol(s, line, g.startCol) <= char && char <= scrblCol(s, line, g.endCol)) ??
     goals.find((g) => g.line - 1 === line) ??
     (goals.length === 1 ? goals[0] : undefined);
   if (!g) {
@@ -210,9 +224,10 @@ connection.onExecuteCommand(async (params) => {
       `No goal here. Goals are on line(s) ${goals.map((g) => g.line).join(", ")}.`);
     return;
   }
+  const gl = g.line - 1;
   const holeRange = {
-    start: { line: g.line - 1, character: g.startCol - 1 },
-    end: { line: g.line - 1, character: g.endCol - 1 },
+    start: { line: gl, character: scrblCol(s, gl, g.startCol) },
+    end: { line: gl, character: scrblCol(s, gl, g.endCol) },
   };
 
   if (cmd === "agda-scrbl.exec.goalType") {
@@ -231,20 +246,25 @@ connection.onExecuteCommand(async (params) => {
 
   } else if (cmd === "agda-scrbl.exec.give" || cmd === "agda-scrbl.exec.refine") {
     const isRefine = cmd.endsWith("refine");
+    // The client prompts for a term and passes it as `variable`; prefer it, and
+    // fall back to whatever is literally inside the {! !} hole otherwise.
     const raw = doc.getText(holeRange);
     const m = HOLE.exec(raw);
-    const content = m ? m[1] : raw.replace(/^\?/, "").trim();
+    const fromHole = m ? m[1] : raw.replace(/^\?/, "").trim();
+    const content = (variable ?? "").trim() || fromHole;
+    // give must place a term; refine with no term is a valid "introduce" step.
     if (!isRefine && !content) {
-      connection.window.showWarningMessage("give needs a term inside {!  !}."); return;
+      connection.window.showWarningMessage("give needs a term."); return;
     }
     const res = isRefine ? await s.agda.refine(g.id, content) : await s.agda.give(g.id, content);
     if (!res) {
       connection.window.showWarningMessage(
         `${isRefine ? "refine" : "give"} produced nothing (does it type-check?).`); return;
     }
+    const rl = res.line - 1;
     await applyEdit(uri, [TextEdit.replace({
-      start: { line: res.line - 1, character: res.startCol - 1 },
-      end: { line: res.line - 1, character: res.endCol - 1 },
+      start: { line: rl, character: scrblCol(s, rl, res.startCol) },
+      end: { line: rl, character: scrblCol(s, rl, res.endCol) },
     }, res.str)]);
   }
 });

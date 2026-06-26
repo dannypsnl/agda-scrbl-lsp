@@ -1,0 +1,45 @@
+name: Release
+
+# Publishes on a version tag, e.g.  git tag v0.0.2 && git push origin v0.0.2
+# The tag's version (without the leading `v`) must match package.json's version.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write   # create the GitHub Release and upload the .vsix
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Verify tag matches package.json version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag v$tag does not match package.json version $pkg"
+            exit 1
+          fi
+
+      - name: Package .vsix
+        run: npx --yes @vscode/vsce package --out "agda-scrbl-${GITHUB_REF_NAME}.vsix"
+
+      - name: Create GitHub Release with the .vsix attached
+        uses: softprops/action-gh-release@v2
+        with:
+          files: agda-scrbl-${{ github.ref_name }}.vsix
+          generate_release_notes: true
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx --yes @vscode/vsce publish --pat "$VSCE_PAT" --packagePath "agda-scrbl-${GITHUB_REF_NAME}.vsix"

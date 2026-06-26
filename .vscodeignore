@@ -1,0 +1,16 @@
+# Sources & build inputs (only out/ is shipped)
+src/**
+test.ts
+tsconfig.json
+**/*.map
+**/*.ts
+
+# Dev tooling / repo metadata
+.github/**
+.vscode/**
+.gitignore
+.vscodeignore
+package-lock.json
+
+# Keep: out/, package.json, README.md, LICENSE, language-configuration.json
+!out/**/*.js

@@ -4,6 +4,10 @@
   "displayName": "Agda in Scribble (.lagda.scrbl)",
   "description": "Interactive Agda development directly on literate .lagda.scrbl cards",
   "version": "0.0.1",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/dannypsnl/agda-scrbl-lsp.git" },
+  "bugs": { "url": "https://github.com/dannypsnl/agda-scrbl-lsp/issues" },
+  "homepage": "https://github.com/dannypsnl/agda-scrbl-lsp#readme",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Programming Languages"],
   "activationEvents": ["workspaceContains:**/*.lagda.scrbl"],
@@ -33,8 +37,11 @@
     ]
   },
   "scripts": {
+    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "publish": "vsce publish",
     "test": "bun run test.ts"
   },
   "dependencies": {

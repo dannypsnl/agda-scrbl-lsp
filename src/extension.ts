@@ -30,18 +30,19 @@ export function activate(context: ExtensionContext) {
   status.command = "agda-scrbl.load";
   context.subscriptions.push(status);
 
-  client.start().then(() => {
-    client.onNotification("agda-scrbl/status", (p: any) => {
-      switch (p.state) {
-        case "checking": status.text = "$(sync~spin) Agda: checking…"; break;
-        case "error":    status.text = `$(error) Agda: ${p.errors ?? ""} error${p.errors === 1 ? "" : "s"}`.trimEnd(); break;
-        case "done":     status.text = p.goals > 0
-                           ? `$(target) Agda: ${p.goals} goal${p.goals === 1 ? "" : "s"}`
-                           : "$(check) Agda: All done"; break;
-      }
-      status.show();
-    });
+  // Register the handler before start() so early status notifications aren't missed.
+  client.onNotification("agda-scrbl/status", (p: any) => {
+    switch (p.state) {
+      case "checking": status.text = "$(sync~spin) Agda: checking…"; break;
+      case "error":    status.text = `$(error) Agda: ${p.errors ?? ""} error${p.errors === 1 ? "" : "s"}`.trimEnd(); break;
+      case "done":     status.text = p.goals > 0
+                         ? `$(target) Agda: ${p.goals} goal${p.goals === 1 ? "" : "s"}`
+                         : "$(check) Agda: All done"; break;
+    }
+    status.show();
   });
+  client.start().catch((err) =>
+    window.showErrorMessage(`Agda (scrbl) language server failed to start: ${err}`));
 
   context.subscriptions.push(
     // palette / keybinding entry points (act on the cursor)
@@ -86,11 +87,17 @@ async function caseSplitAt(uri?: string, line?: number) {
 async function giveRefineAt(exec: string, uri?: string, line?: number) {
   const c = ctx(uri, line);
   if (!c) return;
-  const term = await window.showInputBox({
-    prompt: exec.endsWith("refine") ? "Refine with term" : "Give term",
-    value: holeAt(c.ed, c.line),
-  });
-  if (term === undefined) return;
+  const isRefine = exec.endsWith("refine");
+  // agda-mode style: if the hole already holds a term, use it directly; only
+  // pop an input box when the hole is empty.
+  let term = holeAt(c.ed, c.line).trim();
+  if (!term) {
+    const input = await window.showInputBox({
+      prompt: isRefine ? "Refine with term (blank = introduce)" : "Give term",
+    });
+    if (input === undefined) return;   // cancelled
+    term = input;
+  }
   await commands.executeCommand(exec, c.uri, c.line, 0, term);
 }
 

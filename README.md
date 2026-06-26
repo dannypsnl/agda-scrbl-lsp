@@ -34,7 +34,6 @@ project `P`:
 ## Build
 
 ```sh
-cd tools/agda-scrbl-lsp
 npm install
 npm run compile        # tsc -> out/
 ```
@@ -71,3 +70,28 @@ Not yet wired (same `executeCommand` plumbing):
 - auto / goal-type-context panel
 - `ExtendedLambda` case-split falls back to whole-line replace
 - one `agda` process per open document (no cross-document interleaving guard)
+
+## Releasing
+
+CI (`.github/workflows/ci.yml`) type-checks and builds a `.vsix` on every push
+and PR to `main`.
+
+Publishing is tag-driven (`.github/workflows/release.yml`):
+
+```sh
+# bump "version" in package.json first, commit, then:
+git tag v0.0.2
+git push origin v0.0.2
+```
+
+The tag (minus the leading `v`) must match `package.json`'s `version`. On a
+matching tag the workflow packages the `.vsix`, attaches it to a GitHub Release,
+and publishes to the VS Code Marketplace.
+
+One-time setup: add a `VSCE_PAT` repository secret — a [Marketplace personal
+access token](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#get-a-personal-access-token)
+for the `dannypsnl` publisher.
+
+## License
+
+[MIT](./LICENSE) © Lîm Tsú-thuàn
