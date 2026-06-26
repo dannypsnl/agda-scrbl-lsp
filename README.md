@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="resources/icons/agda.png" alt="Agda" width="320">
-</p>
-
 # agda-scrbl
 
 Interactive Agda development **directly on `.lagda.scrbl`** cards — without
