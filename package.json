@@ -3,7 +3,7 @@
   "publisher": "dannypsnl",
   "displayName": "Agda in Scribble (.lagda.scrbl)",
   "description": "Interactive Agda development directly on literate .lagda.scrbl cards",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/dannypsnl/agda-scrbl-lsp.git" },
   "bugs": { "url": "https://github.com/dannypsnl/agda-scrbl-lsp/issues" },
