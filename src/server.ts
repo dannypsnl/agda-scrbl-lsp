@@ -174,7 +174,15 @@ function sessionFor(doc: TextDocument): Session {
     // has already taken over this document.
     (reason) => {
       if (sessions.get(uri)?.agda === agda)
-        connection.sendNotification("agda-scrbl/status", { uri, state: "error", message: reason });
+        connection.sendNotification("agda-scrbl/status",
+          { uri, state: "error", message: reason, notify: true });
+    },
+    // Live type-checking progress: forward each "Checking Foo …" line as a
+    // status detail (ignored if a newer session has taken over the document).
+    (message) => {
+      const detail = shortProgress(message);
+      if (detail && sessions.get(uri)?.agda === agda)
+        connection.sendNotification("agda-scrbl/status", { uri, state: "checking", detail });
     },
   );
   s = { agda, root, mirror, indents: [], uri: doc.uri, spans: [], ix: mirrorIndex("") };
@@ -184,6 +192,12 @@ function sessionFor(doc: TextDocument): Session {
 
 function prettify(msg: string, mirror: string): string {
   return msg.split(mirror).join(basename(mirror)).replace(/^[^\n]*:\d+\.\d+(-\d+(\.\d+)?)?: /, "");
+}
+
+// A RunningInfo line ("Checking Foo (/abs/path).\n") -> a short progress label
+// ("Checking Foo"); drops the parenthesised path and trailing punctuation.
+function shortProgress(message: string): string {
+  return message.split("\n")[0].trim().replace(/\s*\([^)]*\)\s*\.?$/, "").trim();
 }
 
 async function reload(doc: TextDocument, expand = false) {
@@ -203,7 +217,7 @@ async function reload(doc: TextDocument, expand = false) {
   } catch (err) {
     if (current())
       connection.sendNotification("agda-scrbl/status",
-        { uri: doc.uri, state: "error", message: err instanceof Error ? err.message : String(err) });
+        { uri: doc.uri, state: "error", message: err instanceof Error ? err.message : String(err), notify: true });
     throw err;
   }
   if (!current()) return;
@@ -235,6 +249,10 @@ async function reload(doc: TextDocument, expand = false) {
     state: errors.length ? "error" : "done",
     goals: goals.length,
     errors: errors.length,
+    // Full messages for a popup, and whether to actually pop it: only on an
+    // explicit load/open/restart, never on the debounced reload while typing.
+    details: errors.length ? errors.map((e) => prettify(e.message, s.mirror)) : undefined,
+    notify: errors.length ? expand : undefined,
   });
 
   // Refresh syntax colouring from this load's highlighting. Even a file with

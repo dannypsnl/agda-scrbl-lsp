@@ -28,6 +28,23 @@ function loadAllSymbols(context: ExtensionContext): UnicodeSymbol[] {
   return mergeSymbols(builtIn, userRaw);
 }
 
+// Pop a check failure as a VSCode error message. Process death / no-response
+// arrives as a single `message`; type errors arrive as `details[]` (inline
+// diagnostics already carry the full text, so the popup shows the first and
+// links to the Problems panel for the rest).
+function showAgdaError(p: any) {
+  if (p.message) { window.showErrorMessage(`Agda: ${p.message}`); return; }
+  const details: string[] = p.details ?? [];
+  if (details.length === 0) {
+    window.showErrorMessage(`Agda: ${p.errors ?? 0} error${p.errors === 1 ? "" : "s"}`);
+    return;
+  }
+  const more = details.length > 1 ? ` (+${details.length - 1} more)` : "";
+  window.showErrorMessage(`Agda: ${details[0]}${more}`, "Show Problems").then((choice) => {
+    if (choice === "Show Problems") commands.executeCommand("workbench.actions.view.problems");
+  });
+}
+
 export function activate(context: ExtensionContext) {
   const module = context.asAbsolutePath(path.join("out", "server.js"));
   const serverOptions: ServerOptions = {
@@ -51,11 +68,14 @@ export function activate(context: ExtensionContext) {
   client.onNotification("agda-scrbl/status", (p: any) => {
     status.tooltip = undefined;
     switch (p.state) {
-      case "checking": status.text = "$(sync~spin) Agda: checking…"; break;
+      case "checking": status.text = p.detail                                  // current module being checked
+                         ? `$(sync~spin) Agda: ${p.detail}…`
+                         : "$(sync~spin) Agda: checking…"; break;
       case "error":    status.text = p.message
                          ? `$(error) Agda: ${p.message}`                       // process died / no response
                          : `$(error) Agda: ${p.errors ?? ""} error${p.errors === 1 ? "" : "s"}`.trimEnd();
-                       status.tooltip = p.message ?? undefined; break;
+                       status.tooltip = p.message ?? undefined;
+                       if (p.notify) showAgdaError(p); break;
       case "done":     status.text = p.goals > 0
                          ? `$(target) Agda: ${p.goals} goal${p.goals === 1 ? "" : "s"}`
                          : "$(check) Agda: All done"; break;

@@ -132,6 +132,9 @@ export class Agda {
     // Called when the process dies unexpectedly (not on an explicit dispose), so
     // the host can flip its status to error with the reason.
     private onFatal?: (reason: string) => void,
+    // Called with each `RunningInfo` line during a load (e.g. "Checking Foo …"),
+    // so the host can show type-checking progress.
+    private onProgress?: (message: string) => void,
   ) {
     this.proc = spawn(agdaPath, ["--interaction-json"], { cwd });
     this.proc.stdout.setEncoding("utf8");
@@ -208,6 +211,8 @@ export class Agda {
           });
         }
       }
+    } else if (resp.kind === "RunningInfo" && typeof resp.message === "string") {
+      this.onProgress?.(resp.message);
     }
     if (this.sink) this.sink(resp);
   }
