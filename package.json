@@ -3,22 +3,37 @@
   "publisher": "dannypsnl",
   "displayName": "Agda in Scribble (.lagda.scrbl)",
   "description": "Interactive Agda development directly on literate .lagda.scrbl cards",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "license": "MIT",
   "icon": "icon.png",
-  "repository": { "type": "git", "url": "https://github.com/dannypsnl/agda-scrbl-lsp.git" },
-  "bugs": { "url": "https://github.com/dannypsnl/agda-scrbl-lsp/issues" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dannypsnl/agda-scrbl-lsp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dannypsnl/agda-scrbl-lsp/issues"
+  },
   "homepage": "https://github.com/dannypsnl/agda-scrbl-lsp#readme",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Programming Languages"],
-  "activationEvents": ["workspaceContains:**/*.lagda.scrbl"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [
+    "workspaceContains:**/*.lagda.scrbl"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "languages": [
       {
         "id": "lagda-scrbl",
-        "aliases": ["Literate Agda (Scribble)"],
-        "filenamePatterns": ["*.lagda.scrbl"],
+        "aliases": [
+          "Literate Agda (Scribble)"
+        ],
+        "filenamePatterns": [
+          "*.lagda.scrbl"
+        ],
         "configuration": "./language-configuration.json",
         "icon": {
           "light": "./resources/icons/agda-light.svg",
@@ -27,9 +42,17 @@
       },
       {
         "id": "agda",
-        "aliases": ["Agda", "Literate Agda"],
-        "extensions": [".agda", ".lagda"],
-        "filenamePatterns": ["*.lagda.md"],
+        "aliases": [
+          "Agda",
+          "Literate Agda"
+        ],
+        "extensions": [
+          ".agda",
+          ".lagda"
+        ],
+        "filenamePatterns": [
+          "*.lagda.md"
+        ],
         "icon": {
           "light": "./resources/icons/agda-light.svg",
           "dark": "./resources/icons/agda-dark.svg"
@@ -37,21 +60,66 @@
       }
     ],
     "commands": [
-      { "command": "agda-scrbl.caseSplit", "title": "Agda (scrbl): Case Split" },
-      { "command": "agda-scrbl.give", "title": "Agda (scrbl): Give" },
-      { "command": "agda-scrbl.refine", "title": "Agda (scrbl): Refine" },
-      { "command": "agda-scrbl.goalType", "title": "Agda (scrbl): Goal Type & Context" },
-      { "command": "agda-scrbl.insertSymbol", "title": "Agda (scrbl): Insert Unicode Symbol" },
-      { "command": "agda-scrbl.load", "title": "Agda (scrbl): Load / Reload" },
-      { "command": "agda-scrbl.restart", "title": "Agda (scrbl): Restart Agda" }
+      {
+        "command": "agda-scrbl.caseSplit",
+        "title": "Agda (scrbl): Case Split"
+      },
+      {
+        "command": "agda-scrbl.give",
+        "title": "Agda (scrbl): Give"
+      },
+      {
+        "command": "agda-scrbl.refine",
+        "title": "Agda (scrbl): Refine"
+      },
+      {
+        "command": "agda-scrbl.goalType",
+        "title": "Agda (scrbl): Goal Type & Context"
+      },
+      {
+        "command": "agda-scrbl.insertSymbol",
+        "title": "Agda (scrbl): Insert Unicode Symbol"
+      },
+      {
+        "command": "agda-scrbl.load",
+        "title": "Agda (scrbl): Load / Reload"
+      },
+      {
+        "command": "agda-scrbl.restart",
+        "title": "Agda (scrbl): Restart Agda"
+      }
     ],
     "keybindings": [
-      { "command": "agda-scrbl.caseSplit", "key": "ctrl+c ctrl+c", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
-      { "command": "agda-scrbl.give", "key": "ctrl+c ctrl+space", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
-      { "command": "agda-scrbl.refine", "key": "ctrl+c ctrl+r", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
-      { "command": "agda-scrbl.load", "key": "ctrl+c ctrl+l", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
-      { "command": "agda-scrbl.restart", "key": "ctrl+c ctrl+x ctrl+r", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/" },
-      { "command": "agda-scrbl.insertSymbol", "key": "\\", "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/ && !suggestWidgetVisible && !inQuickOpen" }
+      {
+        "command": "agda-scrbl.caseSplit",
+        "key": "ctrl+c ctrl+c",
+        "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/"
+      },
+      {
+        "command": "agda-scrbl.give",
+        "key": "ctrl+c ctrl+space",
+        "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/"
+      },
+      {
+        "command": "agda-scrbl.refine",
+        "key": "ctrl+c ctrl+r",
+        "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/"
+      },
+      {
+        "command": "agda-scrbl.load",
+        "key": "ctrl+c ctrl+l",
+        "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/"
+      },
+      {
+        "command": "agda-scrbl.restart",
+        "key": "ctrl+c ctrl+x ctrl+r",
+        "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/"
+      },
+      {
+        "command": "agda-scrbl.insertSymbol",
+        "key": "\\",
+        "when": "editorTextFocus && resourceFilename =~ /\\.lagda\\.scrbl$/ && !suggestWidgetVisible && !inQuickOpen"
+      }
     ],
     "configuration": {
       "title": "Agda (scrbl)",
@@ -68,11 +136,26 @@
           "description": "User-defined unicode symbols. Each entry: { name, glyph, aliases? }. User entries override built-ins with the same name and are searchable by name and aliases in both the inline \\-completion and the Insert Symbol picker.",
           "items": {
             "type": "object",
-            "required": ["name", "glyph"],
+            "required": [
+              "name",
+              "glyph"
+            ],
             "properties": {
-              "name": { "type": "string", "description": "Canonical name shown in the picker (typeable as \\name)." },
-              "glyph": { "type": "string", "description": "The unicode character(s) inserted." },
-              "aliases": { "type": "array", "items": { "type": "string" }, "description": "Alternate names searched by the picker and completion." }
+              "name": {
+                "type": "string",
+                "description": "Canonical name shown in the picker (typeable as \\name)."
+              },
+              "glyph": {
+                "type": "string",
+                "description": "The unicode character(s) inserted."
+              },
+              "aliases": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Alternate names searched by the picker and completion."
+              }
             }
           }
         }
