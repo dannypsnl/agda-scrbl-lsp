@@ -8,6 +8,7 @@
 // to the .lagda.scrbl by identity.
 
 import { spawn, ChildProcessWithoutNullStreams } from "child_process";
+import { dirname } from "path";
 
 export interface Goal {
   id: number;
@@ -136,7 +137,12 @@ export class Agda {
     // so the host can show type-checking progress.
     private onProgress?: (message: string) => void,
   ) {
-    this.proc = spawn(agdaPath, ["--interaction-json"], { cwd });
+    // Put the mirror's own directory on the include path with `-i` so its module
+    // resolves without the project's *.agda-lib having to list it. The project's
+    // libraries/flags still load normally (agda discovers the .agda-lib by walking
+    // up from the mirror). This is what lets the mirror live outside the source
+    // tree (e.g. under .vscode) instead of being tangled into the project.
+    this.proc = spawn(agdaPath, ["-i", dirname(mirrorFile), "--interaction-json"], { cwd });
     this.proc.stdout.setEncoding("utf8");
     this.proc.stdout.on("data", (d: string) => this.onData(d));
     this.proc.stderr.setEncoding("utf8");

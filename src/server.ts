@@ -161,9 +161,16 @@ function sessionFor(doc: TextDocument): Session {
   const file = fileURLToPath(doc.uri);
   const root = projectRoot(file);
   const name = basename(file).replace(/\.lagda\.scrbl$/, ".agda");
-  const mirror = resolve(root, "_tmp/mirror", name);
+  // The mirror lives in its own scratch area under the project's .vscode/ — an
+  // editor-local, conventionally git-ignored directory — rather than tangled into
+  // the source tree. agda.ts adds this dir to the include path with `-i`, so the
+  // project's *.agda-lib needs no `_tmp/mirror` entry. (Legacy: older builds wrote
+  // to <root>/_tmp/mirror and asked the user to edit include:.)
+  const mirror = resolve(root, ".vscode/agda-scrbl/mirror", name);
   mkdirSync(dirname(mirror), { recursive: true });
-  // drop a stale legacy mirror of the same module (pre-.agda builds wrote .lagda.md)
+  // drop a stale mirror this session may have left from the legacy _tmp/mirror
+  // location, and any pre-.agda .lagda.md sibling, so duplicate modules don't clash
+  rmSync(resolve(root, "_tmp/mirror", name), { force: true });
   rmSync(mirror.replace(/\.agda$/, ".lagda.md"), { force: true });
   const uri = doc.uri;
   const agda = new Agda(

@@ -20,7 +20,7 @@ f x = ?
 `;
 
 const root = resolve(import.meta.dir, "../..");          // blog repo root
-const mirror = resolve(root, "_tmp/mirror/ag-zztest.agda");
+const mirror = resolve(root, ".vscode/agda-scrbl/mirror/ag-zztest.agda");
 mkdirSync(dirname(mirror), { recursive: true });
 writeFileSync(mirror, scrblToMirror(scrbl) + "\n");
 

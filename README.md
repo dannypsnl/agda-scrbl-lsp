@@ -10,26 +10,30 @@ goal **id**, so no position translation is needed.
 ## How it works
 
 ```
-*.lagda.scrbl  ──scrblToMirror──▶  _tmp/mirror/*.agda  ──▶  agda --interaction-json
-     ▲                                                                 │
-     └──────────── WorkspaceEdit (case-split clauses, ...) ◀───────────┘
+*.lagda.scrbl  ──scrblToMirror──▶  .vscode/agda-scrbl/mirror/*.agda  ──▶  agda --interaction-json
+     ▲                                                                            │
+     └──────────────────── WorkspaceEdit (case-split clauses, ...) ◀──────────────┘
 ```
 
 The mirror is plain Agda: every line outside `@agda|{ … }|` (prose and the
 markers) becomes blank, code is kept verbatim at its original line.
 
 The project root is the nearest ancestor with a `*.agda-lib`; the mirror module
-resolves with that project's normal libraries/flags.
+resolves with that project's normal libraries/flags. The mirror directory is put
+on Agda's include path with `-i`, so it needs no entry in the project's
+`*.agda-lib`.
 
 ## Use in any Agda project
 
 This is a standalone extension — not tied to a specific repo. To use it in
 project `P`:
 
-1. `P` has a `*.agda-lib`. Add `_tmp/mirror` to its `include:` line, e.g.
-   `include: src _tmp/mirror`, and git-ignore `_tmp/`.
+1. `P` has a `*.agda-lib`. No edits to it are required — the extension keeps its
+   mirrors in `P/.vscode/agda-scrbl/mirror/` and adds that directory to Agda's
+   include path itself. Git-ignore `.vscode/agda-scrbl/` if you don't already
+   ignore `.vscode/`.
 2. Build & install this extension (below).
-3. Open any `P/**/*.lagda.scrbl`. Mirrors are written to `P/_tmp/mirror/`.
+3. Open any `P/**/*.lagda.scrbl`. Mirrors are written under `P/.vscode/agda-scrbl/`.
 
 ## Build
 
