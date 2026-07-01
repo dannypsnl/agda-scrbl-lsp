@@ -192,6 +192,37 @@ function projectRoot(file: string): string {
   }
 }
 
+function collectScrbl(root: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string, depth: number) => {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    if (depth > 0 && entries.some((e) => e.isFile() && e.name.endsWith(".agda-lib"))) return;
+    for (const e of entries) {
+      if (e.isDirectory()) {
+        if (e.name.startsWith(".") || e.name.startsWith("_") || e.name === "node_modules") continue;
+        walk(resolve(dir, e.name), depth + 1);
+      } else if (e.name.endsWith(".lagda.scrbl")) {
+        out.push(resolve(dir, e.name));
+      }
+    }
+  };
+  walk(root, 0);
+  return out;
+}
+
+function ensureSiblingMirrors(root: string, mirrorDir: string, currentUri: string) {
+  for (const file of collectScrbl(root)) {
+    const uri = pathToFileURL(file).href;
+    if (uri === currentUri || sessions.has(uri)) continue;
+    const dest = resolve(mirrorDir, basename(file).replace(/\.lagda\.scrbl$/, ".agda"));
+    try {
+      const text = mirror(documents.get(uri)?.getText() ?? readFileSync(file, "utf8")).text;
+      writeFileSync(dest, text.endsWith("\n") ? text : text + "\n");
+    } catch { /* skip an unreadable sibling */ }
+  }
+}
+
 function sessionFor(doc: TextDocument): Session {
   let s = sessions.get(doc.uri);
   if (s) {
@@ -204,16 +235,11 @@ function sessionFor(doc: TextDocument): Session {
   const file = fileURLToPath(doc.uri);
   const root = projectRoot(file);
   const name = basename(file).replace(/\.lagda\.scrbl$/, ".agda");
-  // The mirror lives in its own scratch area under the project's .vscode/ — an
-  // editor-local, conventionally git-ignored directory — rather than tangled into
-  // the source tree. agda.ts adds this dir to the include path with `-i`, so the
-  // project's *.agda-lib needs no `_tmp/mirror` entry. (Legacy: older builds wrote
-  // to <root>/_tmp/mirror and asked the user to edit include:.)
-  const mirror = resolve(root, ".vscode/agda-scrbl/mirror", name);
-  mkdirSync(dirname(mirror), { recursive: true });
-  // drop a stale mirror this session may have left from the legacy _tmp/mirror
-  // location, and any pre-.agda .lagda.md sibling, so duplicate modules don't clash
-  rmSync(resolve(root, "_tmp/mirror", name), { force: true });
+  const mirrorDir = resolve(root, ".vscode/agda-scrbl/mirror");
+  const mirror = resolve(mirrorDir, name);
+  mkdirSync(mirrorDir, { recursive: true });
+  ensureSiblingMirrors(root, mirrorDir, doc.uri);
+  // drop a stale .lagda.md sibling an older agda-scrbl may have written for this doc
   rmSync(mirror.replace(/\.agda$/, ".lagda.md"), { force: true });
   const uri = doc.uri;
   const agda = new Agda(
