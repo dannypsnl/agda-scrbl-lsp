@@ -130,6 +130,12 @@
           "minimum": 1,
           "markdownDescription": "Seconds to wait for `agda` to respond to a load before giving up and reporting that Agda is not responding. Raise this if cold-compiling large libraries (TypeTopology, cubical) legitimately takes longer. Reload the window to apply a change."
         },
+        "agda-scrbl.warmRetain": {
+          "type": "number",
+          "default": 600,
+          "minimum": 0,
+          "markdownDescription": "Seconds to keep a closed file's `agda` process alive so reopening it reuses the already-loaded library interfaces instead of a slow cold reload. `0` disables this and kills `agda` as soon as the tab closes. Higher values reopen faster but hold more memory (at most 3 processes are kept warm). Reload the window to apply a change."
+        },
         "agda-scrbl.unicodeInput.userSymbols": {
           "type": "array",
           "default": [],

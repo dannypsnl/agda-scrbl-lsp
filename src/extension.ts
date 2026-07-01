@@ -56,6 +56,7 @@ export function activate(context: ExtensionContext) {
     // Sent once at startup; changing the setting needs a window reload to apply.
     initializationOptions: {
       loadTimeout: workspace.getConfiguration("agda-scrbl").get<number>("loadTimeout", 120),
+      warmRetain: workspace.getConfiguration("agda-scrbl").get<number>("warmRetain", 600),
     },
   };
   client = new LanguageClient("agdaScrbl", "Agda (lagda.scrbl)", serverOptions, clientOptions);

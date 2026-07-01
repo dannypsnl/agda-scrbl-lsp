@@ -124,13 +124,50 @@ const documents = new TextDocuments(TextDocument);
 // Overridable via the client's initializationOptions (agda-scrbl.loadTimeout).
 let loadTimeoutMs = DEFAULT_LOAD_TIMEOUT;
 
+// Closing a .lagda.scrbl tab does NOT immediately kill its agda process; we keep
+// it "warm" this long so reopening the file reuses the already-loaded library
+// interfaces (which live in the process's memory) instead of paying a cold reload
+// that re-reads every dependency .agdai from disk. The file being edited always
+// has holes and so never gets its own .agdai — a warm process is the only way to
+// make reopening it fast. Overridable via initializationOptions (warmRetain, in
+// seconds); 0 disables retention (dispose immediately on close).
+let warmRetainMs = 10 * 60_000;   // 10 minutes
+// Cap on simultaneously-retained warm processes, so a big library's memory
+// footprint can't accumulate across many closed files. Oldest warm session evicted.
+const MAX_WARM = 3;
+let warmSeq = 0;
+
 interface Session {
   agda: Agda; root: string; mirror: string; indents: number[];
   uri: string;            // the .lagda.scrbl document this session serves
   spans: ScrblSpan[];     // highlighting spans from the last load (scrbl coords)
   ix: MirrorIndex;        // offset index over the last mirror text (for goto)
+  // Set while the document is closed but the process is kept warm: a timer that
+  // truly disposes it after the idle grace period, and the detach order (for LRU
+  // eviction). Both cleared the moment the file is reopened and the session reused.
+  idleTimer?: NodeJS.Timeout;
+  warmAt?: number;
 }
 const sessions = new Map<string, Session>();
+
+// Fully tear down a session's agda process and forget it, cancelling any pending
+// warm-idle timer. Used by close (when retention is off), eviction, the idle
+// timeout, and Restart Agda.
+function disposeSession(uri: string) {
+  const s = sessions.get(uri);
+  if (!s) return;
+  if (s.idleTimer) clearTimeout(s.idleTimer);
+  s.agda.dispose();
+  sessions.delete(uri);
+}
+
+// Keep at most MAX_WARM detached processes alive; dispose the oldest beyond that.
+function evictWarm() {
+  const warm = [...sessions.values()]
+    .filter((s) => s.idleTimer)
+    .sort((a, b) => (a.warmAt ?? 0) - (b.warmAt ?? 0));
+  for (let i = 0; i < warm.length - MAX_WARM; i++) disposeSession(warm[i].uri);
+}
 
 // Agda reports columns against the dedented mirror; add back the indent stripped
 // from that line to land on the scrbl column. line is 0-based.
@@ -157,7 +194,13 @@ function projectRoot(file: string): string {
 
 function sessionFor(doc: TextDocument): Session {
   let s = sessions.get(doc.uri);
-  if (s) return s;
+  if (s) {
+    // Reopened while still warm: cancel the pending disposal and reuse the live
+    // process — its imported interfaces are already in memory, so the coming
+    // reload only has to re-check this one (hole-bearing) file.
+    if (s.idleTimer) { clearTimeout(s.idleTimer); s.idleTimer = undefined; s.warmAt = undefined; }
+    return s;
+  }
   const file = fileURLToPath(doc.uri);
   const root = projectRoot(file);
   const name = basename(file).replace(/\.lagda\.scrbl$/, ".agda");
@@ -294,6 +337,8 @@ function scheduleReload(doc: TextDocument) {
 connection.onInitialize((params): InitializeResult => {
   const lt = (params.initializationOptions as any)?.loadTimeout;
   if (typeof lt === "number" && lt > 0) loadTimeoutMs = lt * 1000;
+  const wr = (params.initializationOptions as any)?.warmRetain;
+  if (typeof wr === "number" && wr >= 0) warmRetainMs = wr * 1000;
   return {
     capabilities: {
       textDocumentSync: TextDocumentSyncKind.Full,
@@ -313,13 +358,21 @@ connection.onInitialize((params): InitializeResult => {
 documents.onDidOpen((e) => reload(e.document, true).catch((err) => connection.console.error(String(err))));
 documents.onDidChangeContent((e) => scheduleReload(e.document));
 documents.onDidClose((e) => {
+  const uri = e.document.uri;
   // Cancel any pending debounced reload — otherwise it fires after close,
   // re-creates the session via sessionFor(), and leaks a fresh agda process.
-  const pending = debounce.get(e.document.uri);
-  if (pending) { clearTimeout(pending); debounce.delete(e.document.uri); }
-  const s = sessions.get(e.document.uri);
-  if (s) { s.agda.dispose(); sessions.delete(e.document.uri); }
-  connection.sendDiagnostics({ uri: e.document.uri, diagnostics: [] });
+  const pending = debounce.get(uri);
+  if (pending) { clearTimeout(pending); debounce.delete(uri); }
+  connection.sendDiagnostics({ uri, diagnostics: [] });
+  const s = sessions.get(uri);
+  if (!s) return;
+  if (warmRetainMs <= 0) { disposeSession(uri); return; }
+  // Keep the process warm so a reopen is cheap; dispose after the idle grace
+  // period, and bound how many warm processes pile up.
+  if (s.idleTimer) clearTimeout(s.idleTimer);
+  s.warmAt = ++warmSeq;
+  s.idleTimer = setTimeout(() => disposeSession(uri), warmRetainMs);
+  evictWarm();
 });
 
 connection.onCodeAction((params): CodeAction[] => {
@@ -425,8 +478,7 @@ connection.onExecuteCommand(async (params) => {
     const [uri] = params.arguments as [string];
     const doc = documents.get(uri);
     if (!doc) return;
-    const old = sessions.get(uri);
-    if (old) { old.agda.dispose(); sessions.delete(uri); }
+    disposeSession(uri);
     await reload(doc, true);   // sessionFor() spins up a new agda
     return;
   }
