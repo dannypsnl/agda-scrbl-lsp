@@ -262,7 +262,7 @@ async function reload(doc: TextDocument, expand = false) {
     const m = mirror(doc.getText());
     mirrorText = m.text;
     s.indents = m.indents;
-    writeFileSync(s.mirror, m.text + "\n");
+    writeFileSync(s.mirror, m.text.endsWith("\n") ? m.text : m.text + "\n");
     ({ goals, errors } = await s.agda.load(loadTimeoutMs));
   } catch (err) {
     if (current())
